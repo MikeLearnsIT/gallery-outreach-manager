@@ -1,0 +1,28 @@
+{
+  "name": "gallery-outreach-manager",
+  "version": "1.0.0",
+  "description": "A lightweight research and outreach management tool for artists discovering UK galleries",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "keywords": [
+    "art",
+    "gallery",
+    "uk",
+    "email",
+    "outreach"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.7.0",
+    "cheerio": "1.0.0-rc.12",
+    "dotenv": "^16.4.0",
+    "express": "^4.21.0",
+    "nodemailer": "^8.0.7",
+    "p-queue": "^6.6.2",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^6.0.1"
+  }
+}

@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UK Gallery Outreach Manager - Artist Outreach Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="logo">
+        <span class="logo-icon">🎨</span>
+        <h1>Gallery Outreach Manager</h1>
+      </div>
+      <p class="logo-sub">A lightweight research and outreach management tool for artists discovering UK galleries.</p>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="#" class="nav-item active" data-view="dashboard"><span class="nav-icon">📊</span> Dashboard</a>
+      <a href="#" class="nav-item" data-view="galleries"><span class="nav-icon">🏛️</span> Galleries</a>
+      <a href="#" class="nav-item" data-view="search"><span class="nav-icon">🔍</span> Search</a>
+      <a href="#" class="nav-item" data-view="templates"><span class="nav-icon">✉️</span> Templates</a>
+      <a href="#" class="nav-item" data-view="sendlog"><span class="nav-icon">📋</span> Send Log</a>
+    </nav>
+    <div class="sidebar-footer">
+      <button class="btn btn-sm btn-outline" id="btnSmtpVerify">🔌 Verify SMTP</button>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main-content" id="mainContent">
+
+    <!-- Dashboard View -->
+    <section class="view active" id="view-dashboard">
+      <div class="view-header">
+        <h2>Dashboard</h2>
+        <p class="text-muted">Overview of your gallery outreach</p>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value" id="statTotal">0</div>
+          <div class="stat-label">Total Galleries</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="statWithEmail">0</div>
+          <div class="stat-label">With Email</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="statSent">0</div>
+          <div class="stat-label">Total Sent</div>
+        </div>
+        <div class="stat-card" style="border-left: 4px solid var(--accent)">
+          <div class="stat-value" id="statOpenRate">0%</div>
+          <div class="stat-label">Open Rate (Opened: <span id="statOpened">0</span>)</div>
+        </div>
+        <div class="stat-card warn">
+          <div class="stat-value" id="statToday">0</div>
+          <div class="stat-label">Sent Today</div>
+        </div>
+      </div>
+      <div class="dashboard-grid">
+        <div class="card">
+          <h3>Galleries by City</h3>
+          <div id="cityChart" class="bar-chart"></div>
+        </div>
+        <div class="card">
+          <h3>Status Breakdown</h3>
+          <div id="statusChart" class="status-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Galleries View -->
+    <section class="view" id="view-galleries">
+      <div class="view-header">
+        <h2>Galleries</h2>
+        <div class="view-actions">
+          <input type="text" class="input" placeholder="Search galleries..." id="gallerySearch">
+          <select class="input select" id="filterCity">
+            <option value="">All Cities</option>
+          </select>
+          <select class="input select" id="filterStatus">
+            <option value="">All Status</option>
+            <option value="new">New</option>
+            <option value="contacted">Contacted</option>
+            <option value="replied">Replied</option>
+            <option value="rejected">Rejected</option>
+          </select>
+          <select class="input select" id="filterEmail">
+            <option value="">All</option>
+            <option value="true">Has Email</option>
+            <option value="false">No Email</option>
+          </select>
+          <button class="btn btn-primary" id="btnAddGallery">+ Add</button>
+          <button class="btn btn-outline" id="btnExportCSV">📥 Export CSV</button>
+        </div>
+      </div>
+      <div class="table-container">
+        <table class="table" id="galleriesTable">
+          <thead>
+            <tr>
+              <th><input type="checkbox" id="selectAll"></th>
+              <th>Name</th>
+              <th>City</th>
+              <th>Website</th>
+              <th>Email</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="galleriesBody"></tbody>
+        </table>
+      </div>
+      <div class="pagination" id="paginationControls"
+        style="display:flex; justify-content:center; gap:8px; margin-top:15px; align-items:center;"></div>
+      <div class="batch-actions" id="batchActions" style="display:none;">
+        <span id="selectedCount">0 selected</span>
+        <button class="btn btn-sm btn-primary" id="btnBatchSend">📧 Send Email</button>
+        <button class="btn btn-sm btn-outline" id="btnBatchScrape">🔍 Scrape Emails</button>
+        <button class="btn btn-sm btn-danger" id="btnBatchDelete">🗑️ Delete</button>
+      </div>
+    </section>
+
+    <!-- Search View -->
+    <section class="view" id="view-search">
+      <div class="view-header">
+        <h2>Search Galleries</h2>
+        <p class="text-muted">Find new galleries via Google Places API</p>
+      </div>
+
+      <!-- City Config Card -->
+      <div class="card config-card">
+        <div class="config-card-header" id="citiesCardHeader">
+          <div>
+            <h3 style="margin:0;">🌆 Search Cities</h3>
+            <p class="text-muted" style="margin:4px 0 0;">Cities included in "Search All Cities". Changes save
+              instantly.</p>
+          </div>
+          <button class="btn btn-sm btn-outline" id="btnToggleCities">▲ Collapse</button>
+        </div>
+        <div id="citiesCardBody">
+          <div class="chip-container" id="cityChips"></div>
+          <div class="chip-add-row">
+            <input type="text" class="input input-sm" id="newCityInput" placeholder="Add city, e.g. Portsmouth">
+            <button class="btn btn-sm btn-primary" id="btnAddCity">+ Add</button>
+            <button class="btn btn-sm btn-outline" id="btnResetCities" title="Reset to defaults">↺ Reset</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Query Config Card -->
+      <div class="card config-card">
+        <div class="config-card-header" id="queriesCardHeader">
+          <div>
+            <h3 style="margin:0;">🔎 Search Queries</h3>
+            <p class="text-muted" style="margin:4px 0 0;">Keywords sent to Google Places API for each city.</p>
+          </div>
+          <button class="btn btn-sm btn-outline" id="btnToggleQueries">▲ Collapse</button>
+        </div>
+        <div id="queriesCardBody">
+          <div class="chip-container" id="queryChips"></div>
+          <div class="chip-add-row">
+            <input type="text" class="input input-sm" id="newQueryInput"
+              placeholder="Add query, e.g. sculpture gallery">
+            <button class="btn btn-sm btn-primary" id="btnAddQuery">+ Add</button>
+            <button class="btn btn-sm btn-outline" id="btnResetQueries" title="Reset to defaults">↺ Reset</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Search Actions -->
+      <div class="card">
+        <h3>Search by City</h3>
+        <div class="search-form">
+          <input type="text" class="input" id="searchCity" placeholder="e.g. London, Manchester...">
+          <button class="btn btn-primary" id="btnSearchCity">🔍 Search City</button>
+        </div>
+        <div class="divider"></div>
+        <h3>Full UK Search</h3>
+        <p class="text-muted">Search across all configured cities (uses Google Places API credits)</p>
+        <button class="btn btn-accent" id="btnSearchAll">🚀 Search All Cities</button>
+        <div class="divider"></div>
+        <h3>Scrape Emails</h3>
+        <p class="text-muted">Scrape contact emails from gallery websites that don't have emails yet</p>
+        <button class="btn btn-secondary" id="btnScrapeAll">📧 Scrape All Missing Emails</button>
+      </div>
+
+      <div class="card" id="searchProgress" style="display:none;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+          <h3 style="margin:0;">Progress</h3>
+          <button class="btn btn-sm btn-stop" id="btnStopScrape" style="display:none;">⏹ Stop</button>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <p class="text-muted" id="progressText">Starting...</p>
+      </div>
+    </section>
+
+    <!-- Templates View -->
+    <section class="view" id="view-templates">
+      <div class="view-header">
+        <h2>Email Templates</h2>
+        <p class="text-muted">Manage and preview your outreach email templates</p>
+      </div>
+      <div class="templates-grid" id="templatesGrid"></div>
+      <div class="card" id="templatePreview" style="display:none;">
+        <div class="preview-header">
+          <h3>Preview</h3>
+          <button class="btn btn-sm btn-outline" id="btnClosePreview">✕ Close</button>
+        </div>
+        <div class="preview-subject" id="previewSubject"></div>
+        <div class="preview-body" id="previewBody"></div>
+      </div>
+    </section>
+
+    <!-- Send Log View -->
+    <section class="view" id="view-sendlog">
+      <div class="view-header">
+        <h2>Send Log</h2>
+        <p class="text-muted">History of all sent emails</p>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Gallery</th>
+              <th>Email</th>
+              <th>Template</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="sendLogBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- Modal -->
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal" id="modal">
+      <div class="modal-header">
+        <h3 id="modalTitle">Modal</h3>
+        <button class="modal-close" id="modalClose">&times;</button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-footer" id="modalFooter"></div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="app.js"></script>
+</body>
+
+</html>
