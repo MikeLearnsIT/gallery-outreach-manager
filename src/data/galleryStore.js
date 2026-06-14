@@ -1,6 +1,33 @@
 const { getDb } = require('./db');
 
 class GalleryStore {
+  constructor() {
+    this.updateableFields = new Set([
+      'name',
+      'city',
+      'address',
+      'website',
+      'phone',
+      'emails',
+      'rating',
+      'place_id',
+      'google_maps_url',
+      'categories',
+      'status',
+      'notes',
+      'last_scraped_at'
+    ]);
+
+    this.sortColumns = {
+      name: 'g.name',
+      city: 'g.city',
+      status: 'g.status',
+      created_at: 'g.created_at',
+      updated_at: 'g.updated_at',
+      rating: 'g.rating'
+    };
+  }
+
   /**
    * Generate a simple unique ID
    */
@@ -15,9 +42,77 @@ class GalleryStore {
     if (!row) return null;
     return {
       ...row,
-      emails: row.emails ? JSON.parse(row.emails) : [],
-      categories: row.categories ? JSON.parse(row.categories) : []
+      emails: this._parseJsonArray(row.emails),
+      categories: this._parseJsonArray(row.categories),
+      open_count: Number(row.open_count || 0)
     };
+  }
+
+  _parseJsonArray(value) {
+    if (Array.isArray(value)) return value;
+    if (!value) return [];
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (err) {
+      return [];
+    }
+  }
+
+  _buildGalleryWhere(filters = {}) {
+    const clauses = ['1=1'];
+    const params = [];
+
+    if (filters.city) {
+      clauses.push('LOWER(g.city) LIKE ?');
+      params.push(`%${filters.city.toLowerCase()}%`);
+    }
+    if (filters.status) {
+      clauses.push('g.status = ?');
+      params.push(filters.status);
+    }
+    if (filters.hasEmail !== undefined) {
+      if (filters.hasEmail) {
+        clauses.push("g.emails != '[]' AND g.emails IS NOT NULL");
+      } else {
+        clauses.push("(g.emails = '[]' OR g.emails IS NULL)");
+      }
+    }
+    if (filters.needsScrape) {
+      clauses.push("(g.last_scraped_at IS NULL OR g.last_scraped_at = '')");
+    }
+    if (filters.category) {
+      clauses.push('g.categories LIKE ?');
+      params.push(`%${filters.category}%`);
+    }
+    if (filters.search) {
+      const term = `%${filters.search.toLowerCase()}%`;
+      clauses.push('(LOWER(g.name) LIKE ? OR LOWER(g.city) LIKE ? OR LOWER(g.address) LIKE ?)');
+      params.push(term, term, term);
+    }
+
+    return { whereSql: clauses.join(' AND '), params };
+  }
+
+  _buildSort(filters = {}) {
+    const hasExplicitSort = Boolean(filters.sortBy);
+    const column = this.sortColumns[filters.sortBy] || 'g.created_at';
+    const dir = hasExplicitSort
+      ? (filters.sortDir === 'desc' ? 'DESC' : 'ASC')
+      : 'DESC';
+    return `${column} ${dir}, g.name ASC`;
+  }
+
+  _serializeUpdateValue(key, value) {
+    if (key === 'emails' || key === 'categories') {
+      return JSON.stringify(Array.isArray(value) ? value : []);
+    }
+    if (key === 'rating') {
+      if (value === '' || value == null) return null;
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric : null;
+    }
+    return value;
   }
 
   // ─── Gallery CRUD ──────────────────────────────────────────
@@ -105,14 +200,23 @@ class GalleryStore {
    * Batch add galleries
    */
   async addMany(galleries) {
+    const db = await getDb();
     let added = 0;
     let updated = 0;
-    for (const g of galleries) {
-      const res = await this.addGallery(g);
-      if (res.action === 'added') added++;
-      if (res.action === 'updated') updated++;
+
+    await db.run('BEGIN TRANSACTION');
+    try {
+      for (const g of galleries) {
+        const res = await this.addGallery(g);
+        if (res.action === 'added') added++;
+        if (res.action === 'updated') updated++;
+      }
+      await db.run('COMMIT');
+    } catch (err) {
+      await db.run('ROLLBACK');
+      throw err;
     }
-    const db = await getDb();
+
     const { total } = await db.get('SELECT COUNT(*) as total FROM galleries');
     return { added, updated, total };
   }
@@ -122,53 +226,36 @@ class GalleryStore {
    */
   async getAll(filters = {}) {
     const db = await getDb();
+    const { whereSql, params } = this._buildGalleryWhere(filters);
     let query = `
       SELECT g.*, 
              MAX(l.opened_at) as latest_open,
-             SUM(CASE WHEN l.opened_at IS NOT NULL THEN 1 ELSE 0 END) as open_count
+             COALESCE(SUM(CASE WHEN l.opened_at IS NOT NULL THEN 1 ELSE 0 END), 0) as open_count
       FROM galleries g
       LEFT JOIN send_log l ON g.id = l.gallery_id
-      WHERE 1=1`;
-    const params = [];
+      WHERE ${whereSql}
+      GROUP BY g.id
+      ORDER BY ${this._buildSort(filters)}`;
 
-    if (filters.city) {
-      query += ' AND LOWER(city) LIKE ?';
-      params.push(`%${filters.city.toLowerCase()}%`);
-    }
-    if (filters.status) {
-      query += ' AND status = ?';
-      params.push(filters.status);
-    }
-    if (filters.hasEmail !== undefined) {
-      if (filters.hasEmail) {
-        query += " AND emails != '[]' AND emails IS NOT NULL";
-      } else {
-        query += " AND (emails = '[]' OR emails IS NULL)";
-      }
-    }
-    if (filters.needsScrape) {
-      query += " AND (last_scraped_at IS NULL OR last_scraped_at = '')";
-    }
-    if (filters.category) {
-      query += ' AND categories LIKE ?';
-      params.push(`%${filters.category}%`);
-    }
-    if (filters.search) {
-      const term = `%${filters.search.toLowerCase()}%`;
-      query += ' AND (LOWER(name) LIKE ? OR LOWER(city) LIKE ? OR LOWER(address) LIKE ?)';
-      params.push(term, term, term);
-    }
-
-    query += ' GROUP BY g.id';
-
-    if (filters.sortBy) {
-      const dir = filters.sortDir === 'desc' ? 'DESC' : 'ASC';
-      const safeSortBy = ['name', 'city', 'status', 'created_at'].includes(filters.sortBy) ? filters.sortBy : 'created_at';
-      query += ` ORDER BY ${safeSortBy} ${dir}`;
+    const limit = Number(filters.limit);
+    const offset = Number(filters.offset || 0);
+    if (Number.isInteger(limit) && limit > 0) {
+      query += ' LIMIT ? OFFSET ?';
+      params.push(limit, Number.isInteger(offset) && offset > 0 ? offset : 0);
     }
 
     const rows = await db.all(query, params);
     return rows.map(r => this._parseRow(r));
+  }
+
+  /**
+   * Count galleries with optional filters
+   */
+  async count(filters = {}) {
+    const db = await getDb();
+    const { whereSql, params } = this._buildGalleryWhere(filters);
+    const { total } = await db.get(`SELECT COUNT(*) as total FROM galleries g WHERE ${whereSql}`, params);
+    return total;
   }
 
   /**
@@ -190,14 +277,11 @@ class GalleryStore {
 
     const setClauses = [];
     const params = [];
-    for (const [key, value] of Object.entries(updates)) {
+    for (const [key, value] of Object.entries(updates || {})) {
       if (key === 'id') continue;
+      if (!this.updateableFields.has(key)) continue;
       setClauses.push(`${key} = ?`);
-      if (key === 'emails' || key === 'categories') {
-        params.push(JSON.stringify(value));
-      } else {
-        params.push(value);
-      }
+      params.push(this._serializeUpdateValue(key, value));
     }
     
     if (setClauses.length === 0) return this._parseRow(row);

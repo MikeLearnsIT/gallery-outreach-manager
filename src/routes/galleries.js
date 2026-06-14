@@ -14,18 +14,21 @@ router.get('/', async (req, res) => {
       sortBy: req.query.sortBy,
       sortDir: req.query.sortDir
     };
-    const galleries = await galleryStore.getAll(filters);
-    const total = galleries.length;
-    
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 50;
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const requestedLimit = parseInt(req.query.limit, 10);
+    const limit = Number.isInteger(requestedLimit)
+      ? Math.min(Math.max(requestedLimit, 1), 200)
+      : 50;
+    const offset = (page - 1) * limit;
+
+    const [total, galleries] = await Promise.all([
+      galleryStore.count(filters),
+      galleryStore.getAll({ ...filters, limit, offset })
+    ]);
+
     const totalPages = Math.ceil(total / limit);
-    const startIndex = (page - 1) * limit;
-    const endIndex = page * limit;
     
-    const paginatedGalleries = galleries.slice(startIndex, endIndex);
-    
-    res.json({ total, page, totalPages, limit, galleries: paginatedGalleries });
+    res.json({ total, page, totalPages, limit, galleries });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

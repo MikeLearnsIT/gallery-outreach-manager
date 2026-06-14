@@ -112,7 +112,7 @@ async function loadDashboard() {
     const maxCity = cities.length > 0 ? cities[0][1] : 1;
     cityChart.innerHTML = cities.map(([city, count]) => `
       <div class="bar-row">
-        <span class="bar-label">${city}</span>
+        <span class="bar-label">${esc(city)}</span>
         <div class="bar-track"><div class="bar-fill" style="width:${(count / maxCity) * 100}%">${count}</div></div>
       </div>`).join('') || '<p class="text-muted">No data yet. Use Search to find galleries.</p>';
 
@@ -120,7 +120,7 @@ async function loadDashboard() {
     const statusChart = document.getElementById('statusChart');
     const statuses = Object.entries(stats.byStatus || {});
     statusChart.innerHTML = statuses.map(([status, count]) => `
-      <div class="status-row"><span class="label">${status}</span><span class="count">${count}</span></div>
+      <div class="status-row"><span class="label">${esc(status)}</span><span class="count">${count}</span></div>
     `).join('') || '<p class="text-muted">No galleries yet.</p>';
   } catch (err) { toast('Failed to load dashboard', 'error'); }
 }
@@ -193,10 +193,10 @@ function renderGalleries(galleries) {
       <td><input type="checkbox" class="gallery-check" data-id="${g.id}" ${selectedGalleries.has(g.id) ? 'checked' : ''}></td>
       <td><strong>${esc(g.name)}</strong></td>
       <td>${esc(g.city)}</td>
-      <td>${g.website ? `<a href="${esc(g.website)}" target="_blank" title="${esc(g.website)}">${truncate(g.website, 30)}</a>` : '<span class="text-muted">—</span>'}</td>
+      <td>${websiteCell(g.website)}</td>
       <td>${g.emails && g.emails.length > 0 ? g.emails.map(e => `<span style="color:var(--success)">${esc(e)}</span>`).join('<br>') : '<span class="text-muted">—</span>'}</td>
       <td>
-        <span class="badge badge-${g.status}">${g.status}</span>
+        ${statusBadge(g.status)}
         ${g.open_count > 0 ? `<br><span class="badge" style="background:var(--accent);margin-top:4px;" title="Latest: ${new Date(g.latest_open).toLocaleString()}">Opened (${g.open_count})</span>` : ''}
       </td>
       <td>
@@ -327,7 +327,7 @@ async function sendOne(id) {
 
   openModal('Send Email', `
     <div class="form-group"><label>Template</label>
-      <select class="input select" id="sendTemplate">${templates.map(t => `<option value="${t.name}">${t.name} — ${esc(t.subject)}</option>`).join('')}</select>
+      <select class="input select" id="sendTemplate">${templates.map(t => `<option value="${esc(t.name)}">${esc(t.name)} — ${esc(t.subject)}</option>`).join('')}</select>
     </div>
     <p class="text-muted">Email will be sent to the first contact email of this gallery.</p>
   `, `<button class="btn btn-primary" id="btnConfirmSend">Send</button><button class="btn btn-outline" onclick="closeModal()">Cancel</button>`);
@@ -360,7 +360,7 @@ document.getElementById('btnBatchSend').addEventListener('click', async () => {
   openModal('Batch Send', `
     <p>Send emails to <strong>${withEmail.length}</strong> galleries with email addresses.</p>
     <div class="form-group"><label>Template</label>
-      <select class="input select" id="batchTemplate">${templates.map(t => `<option value="${t.name}">${t.name}</option>`).join('')}</select>
+      <select class="input select" id="batchTemplate">${templates.map(t => `<option value="${esc(t.name)}">${esc(t.name)}</option>`).join('')}</select>
     </div>
     <p class="text-muted" style="margin-top:10px;">⏱ Emails will be sent with a 45-second delay between each to avoid spam filters.</p>
   `, `<button class="btn btn-primary" id="btnConfirmBatch">Send ${withEmail.length} Emails</button><button class="btn btn-outline" onclick="closeModal()">Cancel</button>`);
@@ -643,8 +643,8 @@ async function loadTemplates() {
     const templates = await api.get('/api/emails/templates');
     const grid = document.getElementById('templatesGrid');
     grid.innerHTML = templates.map(t => `
-      <div class="template-card" data-name="${t.name}">
-        <h4>${t.name}</h4>
+      <div class="template-card" data-name="${esc(t.name)}">
+        <h4>${esc(t.name)}</h4>
         <div class="subject">${esc(t.subject)}</div>
         <div class="preview-text">${esc(t.preview)}</div>
       </div>`).join('');
@@ -681,7 +681,7 @@ async function loadSendLog() {
         <td>${esc(entry.gallery_name || entry.gallery_id)}</td>
         <td>${esc(entry.email_to)}</td>
         <td>${esc(entry.template)}</td>
-        <td><span class="badge badge-${entry.status}">${entry.status}</span></td>
+        <td>${statusBadge(entry.status)}</td>
       </tr>`).join('');
     if (data.log.length === 0) {
       tbody.innerHTML = '<tr><td colspan="5" class="text-muted" style="text-align:center;padding:40px;">No emails sent yet.</td></tr>';
@@ -709,6 +709,27 @@ function esc(str) {
 function truncate(str, len) {
   if (!str) return '';
   return str.length > len ? str.slice(0, len) + '...' : str;
+}
+function statusBadge(status) {
+  const raw = String(status || 'new');
+  const className = raw.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+  return `<span class="badge badge-${className}">${esc(raw)}</span>`;
+}
+function websiteCell(url) {
+  const safeUrl = safeExternalUrl(url);
+  if (!safeUrl) return '<span class="text-muted">—</span>';
+  return `<a href="${esc(safeUrl)}" target="_blank" rel="noopener noreferrer" title="${esc(safeUrl)}">${esc(truncate(safeUrl, 30))}</a>`;
+}
+function safeExternalUrl(url) {
+  const value = String(url || '').trim();
+  if (!value) return '';
+  const normalized = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+  try {
+    const parsed = new URL(normalized);
+    return ['http:', 'https:'].includes(parsed.protocol) ? parsed.href : '';
+  } catch (err) {
+    return '';
+  }
 }
 function debounce(fn, ms) {
   let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };

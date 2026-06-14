@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 
 const TEMPLATES_DIR = path.join(__dirname, '..', '..', 'templates');
+const TEMPLATE_NAME_RE = /^[a-zA-Z0-9_-]+$/;
 
 class TemplateEngine {
   constructor() {
@@ -31,14 +32,14 @@ class TemplateEngine {
   }
 
   getTemplate(name) {
-    const filePath = path.join(TEMPLATES_DIR, `${name}.html`);
+    const filePath = this._getTemplatePath(name);
     if (!fs.existsSync(filePath)) throw new Error(`Template "${name}" not found`);
     return fs.readFileSync(filePath, 'utf-8');
   }
 
   saveTemplate(name, content) {
     if (!fs.existsSync(TEMPLATES_DIR)) fs.mkdirSync(TEMPLATES_DIR, { recursive: true });
-    fs.writeFileSync(path.join(TEMPLATES_DIR, `${name}.html`), content, 'utf-8');
+    fs.writeFileSync(this._getTemplatePath(name), content, 'utf-8');
   }
 
   render(templateName, variables = {}) {
@@ -82,6 +83,19 @@ class TemplateEngine {
     return str.replace(/\{\{(\w+)\}\}/g, (match, key) => {
       return vars[key] !== undefined ? vars[key] : match;
     });
+  }
+
+  _getTemplatePath(name) {
+    if (!TEMPLATE_NAME_RE.test(String(name || ''))) {
+      throw new Error('Template name can only contain letters, numbers, underscores, and dashes');
+    }
+
+    const filePath = path.resolve(TEMPLATES_DIR, `${name}.html`);
+    const templatesRoot = path.resolve(TEMPLATES_DIR) + path.sep;
+    if (!filePath.startsWith(templatesRoot)) {
+      throw new Error('Template path is outside the templates directory');
+    }
+    return filePath;
   }
 }
 

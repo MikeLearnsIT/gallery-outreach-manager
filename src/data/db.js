@@ -14,16 +14,34 @@ if (!fs.existsSync(DATA_DIR)) {
 }
 
 let dbInstance = null;
+let dbInitPromise = null;
 
 async function getDb() {
   if (dbInstance) return dbInstance;
 
-  dbInstance = await open({
+  if (!dbInitPromise) {
+    dbInitPromise = initializeDb().catch(err => {
+      dbInitPromise = null;
+      throw err;
+    });
+  }
+
+  return dbInitPromise;
+}
+
+async function initializeDb() {
+  const db = await open({
     filename: DB_FILE,
     driver: sqlite3.Database
   });
 
-  await dbInstance.exec(`
+  await db.exec(`
+    PRAGMA foreign_keys = ON;
+    PRAGMA journal_mode = WAL;
+    PRAGMA busy_timeout = 5000;
+  `);
+
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS galleries (
       id TEXT PRIMARY KEY,
       name TEXT,
@@ -61,25 +79,41 @@ async function getDb() {
     );
   `);
 
-  // Simple migration to add last_scraped_at if it doesn't exist
-  try {
-    await dbInstance.exec('ALTER TABLE galleries ADD COLUMN last_scraped_at TEXT');
-  } catch (err) {}
+  await ensureColumn(db, 'galleries', 'last_scraped_at', 'last_scraped_at TEXT');
+  await ensureColumn(db, 'send_log', 'opened_at', 'opened_at TEXT');
+  await ensureColumn(db, 'send_log', 'click_count', 'click_count INTEGER DEFAULT 0');
 
-  try {
-    await dbInstance.exec('ALTER TABLE send_log ADD COLUMN opened_at TEXT');
-    await dbInstance.exec('ALTER TABLE send_log ADD COLUMN click_count INTEGER DEFAULT 0');
-    console.log('[DB] Added tracking columns to send_log table');
-  } catch (err) {}
+  await migrateJsonData(db);
+  await createIndexes(db);
 
-  await migrateJsonData();
-
+  dbInstance = db;
   return dbInstance;
 }
 
-async function migrateJsonData() {
+async function ensureColumn(db, tableName, columnName, columnDefinition) {
+  const columns = await db.all(`PRAGMA table_info(${tableName})`);
+  if (!columns.some(col => col.name === columnName)) {
+    await db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnDefinition}`);
+    console.log(`[DB] Added ${tableName}.${columnName} column`);
+  }
+}
+
+async function createIndexes(db) {
+  await db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_galleries_place_id ON galleries(place_id);
+    CREATE INDEX IF NOT EXISTS idx_galleries_name_city ON galleries(name, city);
+    CREATE INDEX IF NOT EXISTS idx_galleries_status ON galleries(status);
+    CREATE INDEX IF NOT EXISTS idx_galleries_created_at ON galleries(created_at);
+    CREATE INDEX IF NOT EXISTS idx_galleries_last_scraped_at ON galleries(last_scraped_at);
+    CREATE INDEX IF NOT EXISTS idx_send_log_gallery_id ON send_log(gallery_id);
+    CREATE INDEX IF NOT EXISTS idx_send_log_status_sent_at ON send_log(status, sent_at);
+    CREATE INDEX IF NOT EXISTS idx_send_log_opened_at ON send_log(opened_at);
+  `);
+}
+
+async function migrateJsonData(db) {
   // Migrate galleries
-  const { count } = await dbInstance.get('SELECT COUNT(*) as count FROM galleries');
+  const { count } = await db.get('SELECT COUNT(*) as count FROM galleries');
   if (count === 0 && fs.existsSync(GALLERIES_JSON)) {
     console.log(`[DB Migration] Found ${GALLERIES_JSON}. Migrating to SQLite...`);
     try {
@@ -88,8 +122,8 @@ async function migrateJsonData() {
         const galleries = JSON.parse(rawData);
         console.log(`[DB Migration] Parsed ${galleries.length} galleries. Inserting into DB...`);
         
-        await dbInstance.run('BEGIN TRANSACTION');
-        const stmt = await dbInstance.prepare(`
+        await db.run('BEGIN TRANSACTION');
+        const stmt = await db.prepare(`
           INSERT INTO galleries 
           (id, name, city, address, website, phone, emails, rating, place_id, google_maps_url, categories, status, notes, created_at, updated_at) 
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -115,17 +149,17 @@ async function migrateJsonData() {
           );
         }
         await stmt.finalize();
-        await dbInstance.run('COMMIT');
+        await db.run('COMMIT');
         console.log(`[DB Migration] SUCCESS: ${galleries.length} galleries migrated.`);
       }
     } catch (err) {
-      await dbInstance.run('ROLLBACK');
+      await db.run('ROLLBACK');
       console.error('[DB Migration] ERROR migrating galleries:', err);
     }
   }
 
   // Migrate send_log
-  const { count: logCount } = await dbInstance.get('SELECT COUNT(*) as count FROM send_log');
+  const { count: logCount } = await db.get('SELECT COUNT(*) as count FROM send_log');
   if (logCount === 0 && fs.existsSync(SEND_LOG_JSON)) {
     console.log(`[DB Migration] Found ${SEND_LOG_JSON}. Migrating to SQLite...`);
     try {
@@ -134,8 +168,8 @@ async function migrateJsonData() {
         const logs = JSON.parse(rawData);
         console.log(`[DB Migration] Parsed ${logs.length} logs. Inserting into DB...`);
 
-        await dbInstance.run('BEGIN TRANSACTION');
-        const stmt = await dbInstance.prepare(`
+        await db.run('BEGIN TRANSACTION');
+        const stmt = await db.prepare(`
           INSERT INTO send_log 
           (id, gallery_id, email_to, template, status, sent_at, error) 
           VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -152,11 +186,11 @@ async function migrateJsonData() {
           );
         }
         await stmt.finalize();
-        await dbInstance.run('COMMIT');
+        await db.run('COMMIT');
         console.log(`[DB Migration] SUCCESS: ${logs.length} logs migrated.`);
       }
     } catch (err) {
-      await dbInstance.run('ROLLBACK');
+      await db.run('ROLLBACK');
       console.error('[DB Migration] ERROR migrating logs:', err);
     }
   }
