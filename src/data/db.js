@@ -70,7 +70,43 @@ async function initializeDb() {
       sent_at TEXT,
       opened_at TEXT,
       click_count INTEGER DEFAULT 0,
+      message_id TEXT,
+      reply_token TEXT,
       error TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS replies (
+      id TEXT PRIMARY KEY,
+      gallery_id TEXT NOT NULL,
+      send_log_id TEXT,
+      from_email TEXT,
+      from_name TEXT,
+      subject TEXT,
+      body_text TEXT,
+      snippet TEXT,
+      classification TEXT,
+      status TEXT,
+      received_at TEXT,
+      handled_at TEXT,
+      created_at TEXT,
+      updated_at TEXT,
+      FOREIGN KEY (gallery_id) REFERENCES galleries(id) ON DELETE CASCADE,
+      FOREIGN KEY (send_log_id) REFERENCES send_log(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS followups (
+      id TEXT PRIMARY KEY,
+      gallery_id TEXT NOT NULL,
+      reply_id TEXT,
+      title TEXT,
+      note TEXT,
+      due_at TEXT,
+      status TEXT,
+      completed_at TEXT,
+      created_at TEXT,
+      updated_at TEXT,
+      FOREIGN KEY (gallery_id) REFERENCES galleries(id) ON DELETE CASCADE,
+      FOREIGN KEY (reply_id) REFERENCES replies(id) ON DELETE SET NULL
     );
 
     CREATE TABLE IF NOT EXISTS config (
@@ -82,6 +118,8 @@ async function initializeDb() {
   await ensureColumn(db, 'galleries', 'last_scraped_at', 'last_scraped_at TEXT');
   await ensureColumn(db, 'send_log', 'opened_at', 'opened_at TEXT');
   await ensureColumn(db, 'send_log', 'click_count', 'click_count INTEGER DEFAULT 0');
+  await ensureColumn(db, 'send_log', 'message_id', 'message_id TEXT');
+  await ensureColumn(db, 'send_log', 'reply_token', 'reply_token TEXT');
 
   await migrateJsonData(db);
   await createIndexes(db);
@@ -108,6 +146,15 @@ async function createIndexes(db) {
     CREATE INDEX IF NOT EXISTS idx_send_log_gallery_id ON send_log(gallery_id);
     CREATE INDEX IF NOT EXISTS idx_send_log_status_sent_at ON send_log(status, sent_at);
     CREATE INDEX IF NOT EXISTS idx_send_log_opened_at ON send_log(opened_at);
+    CREATE INDEX IF NOT EXISTS idx_send_log_message_id ON send_log(message_id);
+    CREATE INDEX IF NOT EXISTS idx_send_log_reply_token ON send_log(reply_token);
+    CREATE INDEX IF NOT EXISTS idx_replies_gallery_id ON replies(gallery_id);
+    CREATE INDEX IF NOT EXISTS idx_replies_send_log_id ON replies(send_log_id);
+    CREATE INDEX IF NOT EXISTS idx_replies_status_received_at ON replies(status, received_at);
+    CREATE INDEX IF NOT EXISTS idx_replies_classification ON replies(classification);
+    CREATE INDEX IF NOT EXISTS idx_followups_gallery_id ON followups(gallery_id);
+    CREATE INDEX IF NOT EXISTS idx_followups_reply_id ON followups(reply_id);
+    CREATE INDEX IF NOT EXISTS idx_followups_status_due_at ON followups(status, due_at);
   `);
 }
 

@@ -170,10 +170,61 @@ a:hover { color: var(--primary-hover); }
 .badge-new { background: rgba(124,92,252,0.15); color: var(--primary); }
 .badge-contacted { background: var(--warn-bg); color: var(--warn); }
 .badge-replied { background: var(--success-bg); color: var(--success); }
+.badge-interested { background: var(--success-bg); color: var(--success); }
+.badge-needs_follow_up { background: var(--warn-bg); color: var(--warn); }
+.badge-not_interested { background: rgba(239,68,68,0.15); color: var(--danger); }
+.badge-out_of_office { background: rgba(245,166,35,0.12); color: var(--warn); }
+.badge-needs_review { background: rgba(124,92,252,0.15); color: var(--primary); }
+.badge-handled { background: var(--success-bg); color: var(--success); }
+.badge-archived { background: rgba(100,116,139,0.15); color: var(--text-muted); }
+.badge-bounced { background: rgba(239,68,68,0.15); color: var(--danger); }
 .badge-rejected { background: rgba(239,68,68,0.15); color: var(--danger); }
 .badge-sent { background: var(--success-bg); color: var(--success); }
 .badge-failed { background: rgba(239,68,68,0.15); color: var(--danger); }
 .badge-blocked { background: rgba(100,116,139,0.15); color: var(--text-muted); }
+
+/* ── Replies ──────────────────────────────────────────── */
+.reply-snippet {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  max-width: 420px;
+  margin-top: 4px;
+}
+.reply-section-header {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; margin-bottom: 12px;
+}
+.followups-card { margin-top: 18px; }
+.followups-list {
+  display: flex; flex-direction: column; gap: 10px;
+}
+.followup-item {
+  display: flex; justify-content: space-between; gap: 12px; align-items: center;
+  padding: 12px 14px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--bg);
+}
+.followup-item.is-due {
+  border-color: rgba(245,166,35,0.5);
+  background: rgba(245,166,35,0.08);
+}
+.reply-detail-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px; margin-bottom: 16px;
+}
+.reply-detail-grid > div {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 10px 12px; background: var(--bg);
+  border-radius: var(--radius-sm);
+}
+.readonly-box {
+  padding: 10px 12px; border-radius: var(--radius-sm);
+  background: var(--bg); border: 1px solid var(--border);
+  color: var(--text);
+}
+.reply-body-box {
+  white-space: pre-wrap; max-height: 280px; overflow-y: auto;
+}
 
 /* ── Batch Actions ────────────────────────────────────── */
 .batch-actions {
@@ -238,6 +289,7 @@ a:hover { color: var(--primary-hover); }
 .form-group label { display: block; font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px; }
 .form-group .input { width: 100%; }
 .form-group textarea.input { min-height: 80px; resize: vertical; }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 
 /* ── Toast ─────────────────────────────────────────────── */
 .toast-container { position: fixed; top: 20px; right: 20px; z-index: 300; display: flex; flex-direction: column; gap: 8px; }
@@ -315,4 +367,6 @@ a:hover { color: var(--primary-hover); }
   .view-actions { flex-direction: column; }
   .chip-add-row { flex-wrap: wrap; }
   .config-card-header { flex-direction: column; gap: 8px; }
+  .form-grid, .reply-detail-grid { grid-template-columns: 1fr; }
+  .followup-item { align-items: flex-start; flex-direction: column; }
 }

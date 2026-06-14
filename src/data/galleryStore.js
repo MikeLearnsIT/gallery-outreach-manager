@@ -48,6 +48,19 @@ class GalleryStore {
     };
   }
 
+  _parseReplyRow(row) {
+    if (!row) return null;
+    return {
+      ...row,
+      followup_count: Number(row.followup_count || 0)
+    };
+  }
+
+  _parseFollowupRow(row) {
+    if (!row) return null;
+    return row;
+  }
+
   _parseJsonArray(value) {
     if (Array.isArray(value)) return value;
     if (!value) return [];
@@ -113,6 +126,27 @@ class GalleryStore {
       return Number.isFinite(numeric) ? numeric : null;
     }
     return value;
+  }
+
+  _buildSnippet(bodyText = '', fallback = '') {
+    const source = String(fallback || bodyText || '').replace(/\s+/g, ' ').trim();
+    return source.length > 180 ? `${source.slice(0, 177)}...` : source;
+  }
+
+  _galleryStatusFromReply(classification) {
+    const statusMap = {
+      interested: 'interested',
+      needs_follow_up: 'needs_follow_up',
+      not_interested: 'not_interested',
+      rejected: 'rejected',
+      bounced: 'bounced',
+      out_of_office: 'needs_follow_up'
+    };
+    return statusMap[classification] || 'replied';
+  }
+
+  _normalizeId(value) {
+    return value == null ? null : String(value);
   }
 
   // ─── Gallery CRUD ──────────────────────────────────────────
@@ -308,22 +342,34 @@ class GalleryStore {
   /**
    * Log a sent email
    */
-  async logSend(galleryId, emailTo, templateName, status = 'sent') {
+  async logSend(galleryId, emailTo, templateName, status = 'sent', metadata = {}) {
     const db = await getDb();
     const entry = {
-      id: this._generateId(),
+      id: metadata.id || this._generateId(),
       gallery_id: galleryId,
       email_to: emailTo,
       template: templateName,
       status,
       sent_at: new Date().toISOString(),
+      message_id: metadata.messageId || metadata.message_id || null,
+      reply_token: metadata.replyToken || metadata.reply_token || null,
       error: null
     };
 
     await db.run(`
-      INSERT INTO send_log (id, gallery_id, email_to, template, status, sent_at, error)
-      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [entry.id, entry.gallery_id, entry.email_to, entry.template, entry.status, entry.sent_at, entry.error]
+      INSERT INTO send_log (id, gallery_id, email_to, template, status, sent_at, message_id, reply_token, error)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        entry.id,
+        entry.gallery_id,
+        entry.email_to,
+        entry.template,
+        entry.status,
+        entry.sent_at,
+        entry.message_id,
+        entry.reply_token,
+        entry.error
+      ]
     );
 
     if (status === 'sent') {
@@ -378,6 +424,346 @@ class GalleryStore {
     return count;
   }
 
+  // ─── Replies ───────────────────────────────────────────────
+
+  async addReply(reply = {}) {
+    const db = await getDb();
+    const galleryId = this._normalizeId(reply.galleryId || reply.gallery_id);
+    if (!galleryId) throw new Error('galleryId required');
+
+    const gallery = await this.getById(galleryId);
+    if (!gallery) throw new Error(`Gallery not found: ${galleryId}`);
+
+    const now = new Date().toISOString();
+    const bodyText = reply.bodyText || reply.body_text || '';
+    const classification = reply.classification || 'needs_review';
+    const status = reply.status || 'new';
+    let sendLogId = this._normalizeId(reply.sendLogId || reply.send_log_id);
+    if (!sendLogId) {
+      const latestSend = await db.get(
+        "SELECT id FROM send_log WHERE gallery_id = ? AND status = 'sent' ORDER BY datetime(sent_at) DESC LIMIT 1",
+        [galleryId]
+      );
+      sendLogId = latestSend ? latestSend.id : null;
+    }
+
+    const entry = {
+      id: this._generateId(),
+      gallery_id: galleryId,
+      send_log_id: sendLogId,
+      from_email: reply.fromEmail || reply.from_email || '',
+      from_name: reply.fromName || reply.from_name || '',
+      subject: reply.subject || '',
+      body_text: bodyText,
+      snippet: this._buildSnippet(bodyText, reply.snippet),
+      classification,
+      status,
+      received_at: reply.receivedAt || reply.received_at || now,
+      handled_at: reply.handledAt || reply.handled_at || null,
+      created_at: now,
+      updated_at: now
+    };
+
+    await db.run(`
+      INSERT INTO replies (
+        id, gallery_id, send_log_id, from_email, from_name, subject, body_text, snippet,
+        classification, status, received_at, handled_at, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        entry.id,
+        entry.gallery_id,
+        entry.send_log_id,
+        entry.from_email,
+        entry.from_name,
+        entry.subject,
+        entry.body_text,
+        entry.snippet,
+        entry.classification,
+        entry.status,
+        entry.received_at,
+        entry.handled_at,
+        entry.created_at,
+        entry.updated_at
+      ]
+    );
+
+    await this.update(galleryId, { status: this._galleryStatusFromReply(classification) });
+    return await this.getReplyById(entry.id);
+  }
+
+  async getReplyById(id) {
+    const db = await getDb();
+    const row = await db.get(`
+      SELECT r.*,
+             g.name as gallery_name,
+             g.city as gallery_city,
+             g.website as gallery_website,
+             l.template as sent_template,
+             l.sent_at as sent_at,
+             l.email_to as sent_email_to,
+             l.reply_token as reply_token,
+             COALESCE(COUNT(f.id), 0) as followup_count
+      FROM replies r
+      LEFT JOIN galleries g ON r.gallery_id = g.id
+      LEFT JOIN send_log l ON r.send_log_id = l.id
+      LEFT JOIN followups f ON r.id = f.reply_id
+      WHERE r.id = ?
+      GROUP BY r.id`,
+      [id]
+    );
+    return this._parseReplyRow(row);
+  }
+
+  async getReplies(filters = {}) {
+    const db = await getDb();
+    let query = `
+      SELECT r.*,
+             g.name as gallery_name,
+             g.city as gallery_city,
+             g.website as gallery_website,
+             l.template as sent_template,
+             l.sent_at as sent_at,
+             l.email_to as sent_email_to,
+             l.reply_token as reply_token,
+             COALESCE(COUNT(f.id), 0) as followup_count
+      FROM replies r
+      LEFT JOIN galleries g ON r.gallery_id = g.id
+      LEFT JOIN send_log l ON r.send_log_id = l.id
+      LEFT JOIN followups f ON r.id = f.reply_id
+      WHERE 1=1`;
+    const params = [];
+
+    if (filters.galleryId) {
+      query += ' AND r.gallery_id = ?';
+      params.push(filters.galleryId);
+    }
+    if (filters.status) {
+      query += ' AND r.status = ?';
+      params.push(filters.status);
+    }
+    if (filters.classification) {
+      query += ' AND r.classification = ?';
+      params.push(filters.classification);
+    }
+    if (filters.search) {
+      const term = `%${filters.search.toLowerCase()}%`;
+      query += ' AND (LOWER(g.name) LIKE ? OR LOWER(r.from_email) LIKE ? OR LOWER(r.subject) LIKE ? OR LOWER(r.snippet) LIKE ?)';
+      params.push(term, term, term, term);
+    }
+
+    query += ' GROUP BY r.id ORDER BY datetime(r.received_at) DESC, datetime(r.created_at) DESC';
+    return (await db.all(query, params)).map(r => this._parseReplyRow(r));
+  }
+
+  async updateReply(id, updates = {}) {
+    const db = await getDb();
+    const current = await db.get('SELECT * FROM replies WHERE id = ?', [id]);
+    if (!current) return null;
+
+    const allowedFields = {
+      galleryId: 'gallery_id',
+      gallery_id: 'gallery_id',
+      sendLogId: 'send_log_id',
+      send_log_id: 'send_log_id',
+      fromEmail: 'from_email',
+      from_email: 'from_email',
+      fromName: 'from_name',
+      from_name: 'from_name',
+      subject: 'subject',
+      bodyText: 'body_text',
+      body_text: 'body_text',
+      snippet: 'snippet',
+      classification: 'classification',
+      status: 'status',
+      receivedAt: 'received_at',
+      received_at: 'received_at',
+      handledAt: 'handled_at',
+      handled_at: 'handled_at'
+    };
+
+    const valuesByColumn = {};
+    for (const [key, value] of Object.entries(updates || {})) {
+      const column = allowedFields[key];
+      if (column) valuesByColumn[column] = value;
+    }
+
+    if (valuesByColumn.body_text && !valuesByColumn.snippet) {
+      valuesByColumn.snippet = this._buildSnippet(valuesByColumn.body_text);
+    }
+    if (valuesByColumn.status === 'handled' && !valuesByColumn.handled_at) {
+      valuesByColumn.handled_at = new Date().toISOString();
+    }
+
+    const entries = Object.entries(valuesByColumn);
+    if (entries.length === 0) return this.getReplyById(id);
+
+    const setClauses = entries.map(([column]) => `${column} = ?`);
+    const params = entries.map(([, value]) => value);
+    setClauses.push('updated_at = ?');
+    params.push(new Date().toISOString());
+    params.push(id);
+
+    await db.run(`UPDATE replies SET ${setClauses.join(', ')} WHERE id = ?`, params);
+
+    const classification = valuesByColumn.classification || current.classification;
+    const galleryId = valuesByColumn.gallery_id || current.gallery_id;
+    if (valuesByColumn.classification || valuesByColumn.gallery_id) {
+      await this.update(galleryId, { status: this._galleryStatusFromReply(classification) });
+    }
+
+    return this.getReplyById(id);
+  }
+
+  async deleteReply(id) {
+    const db = await getDb();
+    const res = await db.run('DELETE FROM replies WHERE id = ?', [id]);
+    return res.changes > 0;
+  }
+
+  // ─── Follow-ups ────────────────────────────────────────────
+
+  async addFollowup(followup = {}) {
+    const db = await getDb();
+    const galleryId = this._normalizeId(followup.galleryId || followup.gallery_id);
+    if (!galleryId) throw new Error('galleryId required');
+
+    const gallery = await this.getById(galleryId);
+    if (!gallery) throw new Error(`Gallery not found: ${galleryId}`);
+
+    const now = new Date().toISOString();
+    const entry = {
+      id: this._generateId(),
+      gallery_id: galleryId,
+      reply_id: this._normalizeId(followup.replyId || followup.reply_id),
+      title: followup.title || 'Follow up',
+      note: followup.note || '',
+      due_at: followup.dueAt || followup.due_at || now,
+      status: followup.status || 'open',
+      completed_at: followup.completedAt || followup.completed_at || null,
+      created_at: now,
+      updated_at: now
+    };
+
+    await db.run(`
+      INSERT INTO followups (id, gallery_id, reply_id, title, note, due_at, status, completed_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        entry.id,
+        entry.gallery_id,
+        entry.reply_id,
+        entry.title,
+        entry.note,
+        entry.due_at,
+        entry.status,
+        entry.completed_at,
+        entry.created_at,
+        entry.updated_at
+      ]
+    );
+
+    await this.update(galleryId, { status: 'needs_follow_up' });
+    return await this.getFollowupById(entry.id);
+  }
+
+  async getFollowupById(id) {
+    const db = await getDb();
+    const row = await db.get(`
+      SELECT f.*,
+             g.name as gallery_name,
+             g.city as gallery_city,
+             r.subject as reply_subject,
+             r.classification as reply_classification
+      FROM followups f
+      LEFT JOIN galleries g ON f.gallery_id = g.id
+      LEFT JOIN replies r ON f.reply_id = r.id
+      WHERE f.id = ?`,
+      [id]
+    );
+    return this._parseFollowupRow(row);
+  }
+
+  async getFollowups(filters = {}) {
+    const db = await getDb();
+    let query = `
+      SELECT f.*,
+             g.name as gallery_name,
+             g.city as gallery_city,
+             r.subject as reply_subject,
+             r.classification as reply_classification
+      FROM followups f
+      LEFT JOIN galleries g ON f.gallery_id = g.id
+      LEFT JOIN replies r ON f.reply_id = r.id
+      WHERE 1=1`;
+    const params = [];
+
+    if (filters.galleryId) {
+      query += ' AND f.gallery_id = ?';
+      params.push(filters.galleryId);
+    }
+    if (filters.replyId) {
+      query += ' AND f.reply_id = ?';
+      params.push(filters.replyId);
+    }
+    if (filters.status) {
+      query += ' AND f.status = ?';
+      params.push(filters.status);
+    }
+    if (filters.dueBefore) {
+      query += ' AND datetime(f.due_at) <= datetime(?)';
+      params.push(filters.dueBefore);
+    }
+
+    query += ' ORDER BY datetime(f.due_at) ASC, datetime(f.created_at) DESC';
+    return (await db.all(query, params)).map(r => this._parseFollowupRow(r));
+  }
+
+  async updateFollowup(id, updates = {}) {
+    const db = await getDb();
+    const current = await db.get('SELECT * FROM followups WHERE id = ?', [id]);
+    if (!current) return null;
+
+    const allowedFields = {
+      galleryId: 'gallery_id',
+      gallery_id: 'gallery_id',
+      replyId: 'reply_id',
+      reply_id: 'reply_id',
+      title: 'title',
+      note: 'note',
+      dueAt: 'due_at',
+      due_at: 'due_at',
+      status: 'status',
+      completedAt: 'completed_at',
+      completed_at: 'completed_at'
+    };
+
+    const entries = [];
+    for (const [key, value] of Object.entries(updates || {})) {
+      const column = allowedFields[key];
+      if (column) entries.push([column, value]);
+    }
+    if (updates.status === 'completed' && !updates.completedAt && !updates.completed_at) {
+      entries.push(['completed_at', new Date().toISOString()]);
+    }
+
+    if (entries.length === 0) return this.getFollowupById(id);
+
+    const setClauses = entries.map(([column]) => `${column} = ?`);
+    const params = entries.map(([, value]) => value);
+    setClauses.push('updated_at = ?');
+    params.push(new Date().toISOString());
+    params.push(id);
+
+    await db.run(`UPDATE followups SET ${setClauses.join(', ')} WHERE id = ?`, params);
+    return this.getFollowupById(id);
+  }
+
+  async deleteFollowup(id) {
+    const db = await getDb();
+    const res = await db.run('DELETE FROM followups WHERE id = ?', [id]);
+    return res.changes > 0;
+  }
+
   // ─── Statistics ────────────────────────────────────────────
 
   /**
@@ -406,6 +792,14 @@ class GalleryStore {
     const openRate = totalSent > 0 ? ((totalOpened / totalSent) * 100).toFixed(1) : 0;
     
     const sentToday = await this.getTodaySendCount();
+    const { totalReplies } = await db.get('SELECT COUNT(*) as totalReplies FROM replies');
+    const { newReplies } = await db.get("SELECT COUNT(*) as newReplies FROM replies WHERE status = 'new'");
+    const { interestedReplies } = await db.get("SELECT COUNT(*) as interestedReplies FROM replies WHERE classification = 'interested'");
+    const { openFollowups } = await db.get("SELECT COUNT(*) as openFollowups FROM followups WHERE status = 'open'");
+    const { dueFollowups } = await db.get(
+      "SELECT COUNT(*) as dueFollowups FROM followups WHERE status = 'open' AND datetime(due_at) <= datetime(?)",
+      [new Date().toISOString()]
+    );
 
     return {
       total,
@@ -416,7 +810,12 @@ class GalleryStore {
       totalSent,
       totalOpened,
       openRate,
-      sentToday
+      sentToday,
+      totalReplies,
+      newReplies,
+      interestedReplies,
+      openFollowups,
+      dueFollowups
     };
   }
 

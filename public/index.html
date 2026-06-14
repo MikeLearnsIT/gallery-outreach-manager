@@ -25,6 +25,7 @@
       <a href="#" class="nav-item" data-view="galleries"><span class="nav-icon">🏛️</span> Galleries</a>
       <a href="#" class="nav-item" data-view="search"><span class="nav-icon">🔍</span> Search</a>
       <a href="#" class="nav-item" data-view="templates"><span class="nav-icon">✉️</span> Templates</a>
+      <a href="#" class="nav-item" data-view="replies"><span class="nav-icon">↩</span> Replies</a>
       <a href="#" class="nav-item" data-view="sendlog"><span class="nav-icon">📋</span> Send Log</a>
     </nav>
     <div class="sidebar-footer">
@@ -62,6 +63,14 @@
           <div class="stat-value" id="statToday">0</div>
           <div class="stat-label">Sent Today</div>
         </div>
+        <div class="stat-card success">
+          <div class="stat-value" id="statReplies">0</div>
+          <div class="stat-label">New Replies</div>
+        </div>
+        <div class="stat-card accent">
+          <div class="stat-value" id="statDueFollowups">0</div>
+          <div class="stat-label">Follow-ups Due</div>
+        </div>
       </div>
       <div class="dashboard-grid">
         <div class="card">
@@ -89,7 +98,12 @@
             <option value="new">New</option>
             <option value="contacted">Contacted</option>
             <option value="replied">Replied</option>
+            <option value="interested">Interested</option>
+            <option value="needs_follow_up">Needs Follow-up</option>
+            <option value="not_interested">Not Interested</option>
             <option value="rejected">Rejected</option>
+            <option value="bounced">Bounced</option>
+            <option value="archived">Archived</option>
           </select>
           <select class="input select" id="filterEmail">
             <option value="">All</option>
@@ -216,6 +230,56 @@
         </div>
         <div class="preview-subject" id="previewSubject"></div>
         <div class="preview-body" id="previewBody"></div>
+      </div>
+    </section>
+
+    <!-- Replies View -->
+    <section class="view" id="view-replies">
+      <div class="view-header">
+        <h2>Replies</h2>
+        <div class="view-actions">
+          <input type="text" class="input" placeholder="Search replies..." id="replySearch">
+          <select class="input select" id="replyStatusFilter">
+            <option value="">All Status</option>
+            <option value="new">New</option>
+            <option value="handled">Handled</option>
+            <option value="archived">Archived</option>
+          </select>
+          <select class="input select" id="replyClassificationFilter">
+            <option value="">All Types</option>
+            <option value="interested">Interested</option>
+            <option value="needs_follow_up">Needs Follow-up</option>
+            <option value="not_interested">Not Interested</option>
+            <option value="out_of_office">Out of Office</option>
+            <option value="bounced">Bounced</option>
+            <option value="needs_review">Needs Review</option>
+          </select>
+          <button class="btn btn-primary" id="btnAddReply">+ Add Reply</button>
+        </div>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Received</th>
+              <th>Gallery</th>
+              <th>From</th>
+              <th>Subject</th>
+              <th>Type</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="repliesBody"></tbody>
+        </table>
+      </div>
+
+      <div class="card followups-card">
+        <div class="reply-section-header">
+          <h3>Open Follow-ups</h3>
+          <button class="btn btn-sm btn-outline" id="btnRefreshFollowups">Refresh</button>
+        </div>
+        <div id="followupsList" class="followups-list"></div>
       </div>
     </section>
 

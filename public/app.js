@@ -48,9 +48,20 @@ const api = {
 // ── State ────────────────────────────────────────────────
 let selectedGalleries = new Set();
 let allGalleries = [];
+let allReplies = [];
+let openFollowups = [];
 let currentPage = 1;
 let scrapeAbortController = null;
 const ITEMS_PER_PAGE = 50;
+const REPLY_CLASSIFICATIONS = [
+  ['needs_review', 'Needs Review'],
+  ['interested', 'Interested'],
+  ['needs_follow_up', 'Needs Follow-up'],
+  ['not_interested', 'Not Interested'],
+  ['out_of_office', 'Out of Office'],
+  ['bounced', 'Bounced'],
+  ['rejected', 'Rejected']
+];
 
 // ── Navigation ───────────────────────────────────────────
 document.querySelectorAll('.nav-item').forEach(item => {
@@ -65,6 +76,7 @@ document.querySelectorAll('.nav-item').forEach(item => {
     if (view === 'galleries') loadGalleries();
     if (view === 'search') loadConfig();
     if (view === 'templates') loadTemplates();
+    if (view === 'replies') loadReplies();
     if (view === 'sendlog') loadSendLog();
   });
 });
@@ -99,6 +111,8 @@ async function loadDashboard() {
     document.getElementById('statToday').textContent = stats.sentToday;
     document.getElementById('statOpenRate').textContent = stats.openRate + '%';
     document.getElementById('statOpened').textContent = stats.totalOpened;
+    document.getElementById('statReplies').textContent = stats.newReplies || 0;
+    document.getElementById('statDueFollowups').textContent = stats.dueFollowups || 0;
 
     // City chart and filter
     const cityChart = document.getElementById('cityChart');
@@ -201,6 +215,7 @@ function renderGalleries(galleries) {
       </td>
       <td>
         <button class="btn btn-sm btn-outline btn-edit" data-id="${g.id}" title="Edit">✏️</button>
+        <button class="btn btn-sm btn-outline btn-add-reply" data-id="${g.id}" title="Add Reply">↩</button>
         <button class="btn btn-sm btn-outline btn-scrape-one" data-id="${g.id}" title="Scrape Email">🔍</button>
         ${g.emails && g.emails.length > 0 ? `<button class="btn btn-sm btn-primary btn-send-one" data-id="${g.id}" title="Send Email">📧</button>` : ''}
       </td>
@@ -220,6 +235,7 @@ function renderGalleries(galleries) {
     });
   });
   tbody.querySelectorAll('.btn-edit').forEach(btn => btn.addEventListener('click', () => editGallery(btn.dataset.id)));
+  tbody.querySelectorAll('.btn-add-reply').forEach(btn => btn.addEventListener('click', () => openAddReplyModal(btn.dataset.id)));
   tbody.querySelectorAll('.btn-scrape-one').forEach(btn => btn.addEventListener('click', () => scrapeOne(btn.dataset.id)));
   tbody.querySelectorAll('.btn-send-one').forEach(btn => btn.addEventListener('click', () => sendOne(btn.dataset.id)));
 }
@@ -262,7 +278,7 @@ async function editGallery(id) {
     <div class="form-group"><label>Emails (comma separated)</label><input class="input" id="editEmails" value="${(g.emails || []).join(', ')}"></div>
     <div class="form-group"><label>Status</label>
       <select class="input select" id="editStatus">
-        ${['new','contacted','replied','rejected','not_interested'].map(s => `<option value="${s}" ${g.status === s ? 'selected' : ''}>${s}</option>`).join('')}
+        ${['new','contacted','replied','interested','needs_follow_up','rejected','not_interested','bounced','archived'].map(s => `<option value="${s}" ${g.status === s ? 'selected' : ''}>${s}</option>`).join('')}
       </select>
     </div>
     <div class="form-group"><label>Notes</label><textarea class="input" id="editNotes">${esc(g.notes || '')}</textarea></div>
@@ -670,6 +686,261 @@ document.getElementById('btnClosePreview').addEventListener('click', () => {
   document.getElementById('templatePreview').style.display = 'none';
 });
 
+// ── Replies & Follow-ups ────────────────────────────────
+async function loadReplies() {
+  const params = new URLSearchParams();
+  const search = document.getElementById('replySearch').value;
+  const status = document.getElementById('replyStatusFilter').value;
+  const classification = document.getElementById('replyClassificationFilter').value;
+  if (search) params.set('search', search);
+  if (status) params.set('status', status);
+  if (classification) params.set('classification', classification);
+
+  try {
+    const data = await api.get(`/api/replies?${params}`);
+    allReplies = data.replies || [];
+    renderReplies(allReplies);
+    await loadFollowups();
+  } catch (err) {
+    toast('Failed to load replies', 'error');
+  }
+}
+
+function renderReplies(replies) {
+  const tbody = document.getElementById('repliesBody');
+  tbody.innerHTML = replies.map(reply => `
+    <tr>
+      <td>${formatDateTime(reply.received_at)}</td>
+      <td>
+        <strong>${esc(reply.gallery_name || 'Unknown Gallery')}</strong>
+        ${reply.gallery_city ? `<div class="text-muted">${esc(reply.gallery_city)}</div>` : ''}
+      </td>
+      <td>${esc(reply.from_name || reply.from_email || '—')}</td>
+      <td>
+        <strong>${esc(reply.subject || '(No subject)')}</strong>
+        <div class="reply-snippet">${esc(reply.snippet || '')}</div>
+      </td>
+      <td>${classificationBadge(reply.classification)}</td>
+      <td>${statusBadge(reply.status)}</td>
+      <td>
+        <button class="btn btn-sm btn-outline btn-view-reply" data-id="${reply.id}">View</button>
+        <button class="btn btn-sm btn-outline btn-reply-followup" data-id="${reply.id}" data-gallery-id="${reply.gallery_id}">Follow-up</button>
+        ${reply.status !== 'handled' ? `<button class="btn btn-sm btn-primary btn-handle-reply" data-id="${reply.id}">Done</button>` : ''}
+      </td>
+    </tr>`).join('');
+
+  if (replies.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="text-muted" style="text-align:center;padding:40px;">No replies recorded yet.</td></tr>';
+  }
+
+  tbody.querySelectorAll('.btn-view-reply').forEach(btn => {
+    btn.addEventListener('click', () => viewReply(btn.dataset.id));
+  });
+  tbody.querySelectorAll('.btn-reply-followup').forEach(btn => {
+    btn.addEventListener('click', () => openFollowupModal(btn.dataset.galleryId, btn.dataset.id));
+  });
+  tbody.querySelectorAll('.btn-handle-reply').forEach(btn => {
+    btn.addEventListener('click', () => markReplyHandled(btn.dataset.id));
+  });
+}
+
+async function loadFollowups() {
+  try {
+    const data = await api.get('/api/replies/followups?status=open');
+    openFollowups = data.followups || [];
+    renderFollowups(openFollowups);
+  } catch (err) {
+    toast('Failed to load follow-ups', 'error');
+  }
+}
+
+function renderFollowups(followups) {
+  const list = document.getElementById('followupsList');
+  list.innerHTML = followups.map(followup => {
+    const isDue = followup.due_at && new Date(followup.due_at) <= new Date();
+    return `
+      <div class="followup-item ${isDue ? 'is-due' : ''}">
+        <div>
+          <strong>${esc(followup.gallery_name || 'Unknown Gallery')}</strong>
+          <span class="text-muted">${formatDateTime(followup.due_at)}</span>
+          <div>${esc(followup.title || 'Follow up')}</div>
+          ${followup.note ? `<div class="reply-snippet">${esc(followup.note)}</div>` : ''}
+        </div>
+        <button class="btn btn-sm btn-primary btn-complete-followup" data-id="${followup.id}">Done</button>
+      </div>`;
+  }).join('');
+
+  if (followups.length === 0) {
+    list.innerHTML = '<p class="text-muted">No open follow-ups.</p>';
+  }
+
+  list.querySelectorAll('.btn-complete-followup').forEach(btn => {
+    btn.addEventListener('click', () => completeFollowup(btn.dataset.id));
+  });
+}
+
+async function openAddReplyModal(galleryId = '') {
+  const galleryOptions = await getGalleryOptions(galleryId);
+  openModal('Add Reply', `
+    <div class="form-group"><label>Gallery</label>
+      <select class="input select" id="replyGallery">${galleryOptions}</select>
+    </div>
+    <div class="form-grid">
+      <div class="form-group"><label>From Email</label><input class="input" id="replyFromEmail" placeholder="curator@gallery.com"></div>
+      <div class="form-group"><label>Received</label><input class="input" id="replyReceivedAt" type="datetime-local" value="${toDatetimeLocal(new Date())}"></div>
+    </div>
+    <div class="form-group"><label>Subject</label><input class="input" id="replySubject" placeholder="Re: Gallery enquiry"></div>
+    <div class="form-group"><label>Type</label>
+      <select class="input select" id="replyClassification">
+        ${REPLY_CLASSIFICATIONS.map(([value, label]) => `<option value="${value}">${label}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-group"><label>Reply Body / Notes</label><textarea class="input" id="replyBody" placeholder="Paste the reply or write a short summary"></textarea></div>
+    <div class="divider"></div>
+    <div class="form-grid">
+      <div class="form-group"><label>Follow-up Due</label><input class="input" id="replyFollowupDue" type="datetime-local"></div>
+      <div class="form-group"><label>Follow-up Note</label><input class="input" id="replyFollowupNote" placeholder="Send portfolio, ask for meeting..."></div>
+    </div>
+  `, `<button class="btn btn-primary" id="btnSaveReply">Save Reply</button><button class="btn btn-outline" onclick="closeModal()">Cancel</button>`);
+
+  document.getElementById('btnSaveReply').addEventListener('click', async () => {
+    const selectedGalleryId = document.getElementById('replyGallery').value;
+    if (!selectedGalleryId) {
+      toast('Select a gallery first', 'error');
+      return;
+    }
+
+    try {
+      const reply = await api.post('/api/replies', {
+        galleryId: selectedGalleryId,
+        fromEmail: document.getElementById('replyFromEmail').value.trim(),
+        subject: document.getElementById('replySubject').value.trim(),
+        bodyText: document.getElementById('replyBody').value.trim(),
+        classification: document.getElementById('replyClassification').value,
+        receivedAt: fromDatetimeLocal(document.getElementById('replyReceivedAt').value)
+      });
+
+      const dueAt = document.getElementById('replyFollowupDue').value;
+      if (dueAt) {
+        await api.post('/api/replies/followups', {
+          galleryId: selectedGalleryId,
+          replyId: reply.id,
+          title: 'Follow up on reply',
+          note: document.getElementById('replyFollowupNote').value.trim(),
+          dueAt: fromDatetimeLocal(dueAt)
+        });
+      }
+
+      closeModal();
+      toast('Reply saved', 'success');
+      loadDashboard();
+      loadGalleries();
+      loadReplies();
+    } catch (err) {
+      toast('Failed to save reply', 'error');
+    }
+  });
+}
+
+async function viewReply(id) {
+  try {
+    const reply = await api.get(`/api/replies/${id}`);
+    openModal(`Reply from ${reply.gallery_name || 'Gallery'}`, `
+      <div class="reply-detail-grid">
+        <div><span class="text-muted">Received</span><strong>${formatDateTime(reply.received_at)}</strong></div>
+        <div><span class="text-muted">From</span><strong>${esc(reply.from_name || reply.from_email || '—')}</strong></div>
+        <div><span class="text-muted">Type</span>${classificationBadge(reply.classification)}</div>
+        <div><span class="text-muted">Status</span>${statusBadge(reply.status)}</div>
+      </div>
+      <div class="form-group"><label>Subject</label><div class="readonly-box">${esc(reply.subject || '(No subject)')}</div></div>
+      <div class="form-group"><label>Reply Body</label><div class="readonly-box reply-body-box">${esc(reply.body_text || reply.snippet || '')}</div></div>
+      ${reply.sent_template ? `<p class="text-muted">Matched sent email: ${esc(reply.sent_template)} on ${formatDateTime(reply.sent_at)}</p>` : ''}
+    `, `
+      <button class="btn btn-outline" id="btnArchiveReply">Archive</button>
+      <button class="btn btn-outline" id="btnAddReplyFollowup">Add Follow-up</button>
+      <button class="btn btn-primary" id="btnMarkReplyHandled">Mark Done</button>
+    `);
+
+    document.getElementById('btnArchiveReply').addEventListener('click', async () => {
+      await api.put(`/api/replies/${id}`, { status: 'archived' });
+      closeModal(); toast('Reply archived', 'success'); loadReplies(); loadDashboard();
+    });
+    document.getElementById('btnAddReplyFollowup').addEventListener('click', () => {
+      openFollowupModal(reply.gallery_id, reply.id);
+    });
+    document.getElementById('btnMarkReplyHandled').addEventListener('click', async () => {
+      await markReplyHandled(id);
+      closeModal();
+    });
+  } catch (err) {
+    toast('Failed to load reply', 'error');
+  }
+}
+
+async function openFollowupModal(galleryId, replyId = '') {
+  const defaultDue = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  openModal('Add Follow-up', `
+    <div class="form-group"><label>Title</label><input class="input" id="followupTitle" value="Follow up"></div>
+    <div class="form-group"><label>Due</label><input class="input" id="followupDueAt" type="datetime-local" value="${toDatetimeLocal(defaultDue)}"></div>
+    <div class="form-group"><label>Note</label><textarea class="input" id="followupNote" placeholder="What should happen next?"></textarea></div>
+  `, `<button class="btn btn-primary" id="btnSaveFollowup">Save Follow-up</button><button class="btn btn-outline" onclick="closeModal()">Cancel</button>`);
+
+  document.getElementById('btnSaveFollowup').addEventListener('click', async () => {
+    try {
+      await api.post('/api/replies/followups', {
+        galleryId,
+        replyId,
+        title: document.getElementById('followupTitle').value.trim() || 'Follow up',
+        note: document.getElementById('followupNote').value.trim(),
+        dueAt: fromDatetimeLocal(document.getElementById('followupDueAt').value)
+      });
+      closeModal();
+      toast('Follow-up saved', 'success');
+      loadDashboard();
+      loadGalleries();
+      loadReplies();
+    } catch (err) {
+      toast('Failed to save follow-up', 'error');
+    }
+  });
+}
+
+async function markReplyHandled(id) {
+  try {
+    await api.put(`/api/replies/${id}`, { status: 'handled' });
+    toast('Reply marked done', 'success');
+    loadDashboard();
+    loadReplies();
+  } catch (err) {
+    toast('Failed to update reply', 'error');
+  }
+}
+
+async function completeFollowup(id) {
+  try {
+    await api.put(`/api/replies/followups/${id}`, { status: 'completed' });
+    toast('Follow-up completed', 'success');
+    loadDashboard();
+    loadFollowups();
+  } catch (err) {
+    toast('Failed to complete follow-up', 'error');
+  }
+}
+
+async function getGalleryOptions(selectedId = '') {
+  const data = await api.get('/api/galleries?limit=200&sortBy=name&sortDir=asc');
+  const galleries = data.galleries || [];
+  return '<option value="">Select gallery...</option>' + galleries.map(g => `
+    <option value="${esc(g.id)}" ${g.id === selectedId ? 'selected' : ''}>${esc(g.name)}${g.city ? ` — ${esc(g.city)}` : ''}</option>
+  `).join('');
+}
+
+document.getElementById('replySearch').addEventListener('input', debounce(loadReplies, 300));
+document.getElementById('replyStatusFilter').addEventListener('change', loadReplies);
+document.getElementById('replyClassificationFilter').addEventListener('change', loadReplies);
+document.getElementById('btnAddReply').addEventListener('click', () => openAddReplyModal());
+document.getElementById('btnRefreshFollowups').addEventListener('click', loadFollowups);
+
 // ── Send Log ─────────────────────────────────────────────
 async function loadSendLog() {
   try {
@@ -710,10 +981,31 @@ function truncate(str, len) {
   if (!str) return '';
   return str.length > len ? str.slice(0, len) + '...' : str;
 }
+function classificationBadge(classification) {
+  const raw = String(classification || 'needs_review');
+  const label = REPLY_CLASSIFICATIONS.find(([value]) => value === raw)?.[1] || raw.replace(/_/g, ' ');
+  const className = raw.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+  return `<span class="badge badge-${className}">${esc(label)}</span>`;
+}
 function statusBadge(status) {
   const raw = String(status || 'new');
   const className = raw.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
-  return `<span class="badge badge-${className}">${esc(raw)}</span>`;
+  return `<span class="badge badge-${className}">${esc(raw.replace(/_/g, ' '))}</span>`;
+}
+function formatDateTime(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return esc(value);
+  return date.toLocaleString();
+}
+function toDatetimeLocal(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+function fromDatetimeLocal(value) {
+  return value ? new Date(value).toISOString() : '';
 }
 function websiteCell(url) {
   const safeUrl = safeExternalUrl(url);

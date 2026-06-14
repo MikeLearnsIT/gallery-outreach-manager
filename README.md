@@ -12,8 +12,9 @@ Built with Node.js + Express + vanilla JS. No database server needed (uses SQLit
 - 📧 **Email Scraper** — Automatically finds contact emails from gallery websites (handles obfuscation, Cloudflare protection, mailto links)
 - ✉️ **Outreach Sender** — Send personalised emails using your own Gmail / SMTP with built-in daily rate limiting
 - 📋 **CRM Dashboard** — Track gallery status (contacted, replied, not interested, blocked, etc.)
+- ↩️ **Reply Management** — Manually record gallery replies, classify outcomes, and create follow-up reminders
 - 📝 **Email Templates** — Customisable HTML templates with variable substitution (`{{gallery_name}}`, `{{your_name}}`, etc.)
-- 📊 **Send Tracking** — Records every email sent with timestamps and delivery status
+- 📊 **Send Tracking** — Records every email sent with timestamps, delivery status, message IDs, reply tokens, and open tracking
 - 🛡️ **Anti-spam controls** — 45-second intervals between sends, 50 emails/day cap, retry logic
 
 ---
@@ -75,6 +76,12 @@ ARTIST_WEBSITE=https://your-website.com
 PORTFOLIO_URL=https://your-portfolio.com
 ARTIST_MEDIUM=contemporary painting
 
+# Optional: reply tracking address
+# Defaults to SMTP_USER. Gmail uses plus addressing, e.g. your_email+gom_xxx@gmail.com
+REPLY_TO_EMAIL=your_email@gmail.com
+# Set true for custom domains that also support plus addressing
+REPLY_PLUS_ADDRESSING=false
+
 # Server
 PORT=3000
 ```
@@ -111,7 +118,9 @@ The scraper visits each gallery's website and intelligently extracts contact ema
 Select galleries with emails and send personalised outreach using the built-in email templates. The sender respects rate limits to avoid spam flags.
 
 ### 4. Track Responses
-Update gallery status as you receive replies. Filter and manage your pipeline from the dashboard.
+Use the **Replies** tab to record gallery responses, classify the outcome, and schedule follow-up reminders. When a reply is added, the app links it to the gallery and automatically matches the latest sent email for that gallery when possible.
+
+Sent emails now store the SMTP `messageId` and a generated `replyToken`. For Gmail addresses, the token is also used in the outbound `Reply-To` address via plus addressing, which prepares the app for future automatic inbox syncing. Custom domains can opt in with `REPLY_PLUS_ADDRESSING=true`.
 
 ---
 
@@ -169,6 +178,10 @@ gallery-outreach-manager/
 | `POST` | `/api/finder/scrape-emails` | Scrape emails for galleries (streaming) |
 | `POST` | `/api/finder/scrape-single` | Scrape email for one gallery |
 | `POST` | `/api/emails/send` | Send outreach email |
+| `GET` | `/api/replies` | List recorded gallery replies |
+| `POST` | `/api/replies` | Add a manually recorded gallery reply |
+| `GET` | `/api/replies/followups` | List follow-up reminders |
+| `POST` | `/api/replies/followups` | Create a follow-up reminder |
 | `GET` | `/api/config` | Get artist config from env |
 | `GET` | `/api/health` | Health check |
 

@@ -14,6 +14,7 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 app.use('/api/galleries', require('./routes/galleries'));
 app.use('/api/finder', require('./routes/finder'));
 app.use('/api/emails', require('./routes/emails'));
+app.use('/api/replies', require('./routes/replies'));
 app.use('/api/config', require('./routes/config'));
 app.use('/api/track', require('./routes/tracking'));
 

@@ -8,6 +8,24 @@ class EmailSender {
     this._transporter = null;
   }
 
+  _generateReplyToken(galleryId, logId) {
+    return `gom-${galleryId}-${logId}`.replace(/[^a-zA-Z0-9_-]/g, '-');
+  }
+
+  _getReplyToAddress(replyToken) {
+    const baseAddress = process.env.REPLY_TO_EMAIL || process.env.SMTP_USER;
+    if (!baseAddress || !baseAddress.includes('@')) return undefined;
+
+    const [localPart, ...domainParts] = baseAddress.split('@');
+    const domain = domainParts.join('@');
+    if (!localPart || !domain) return baseAddress;
+
+    const usePlusAddressing = process.env.REPLY_PLUS_ADDRESSING === 'true' || domain.toLowerCase() === 'gmail.com';
+    if (!usePlusAddressing) return baseAddress;
+
+    return `${localPart}+${replyToken}@${domain}`;
+  }
+
   _getTransporter() {
     if (this._transporter) return this._transporter;
     this._transporter = nodemailer.createTransport({
@@ -48,6 +66,8 @@ class EmailSender {
     const rendered = templateEngine.render(templateName, vars);
 
     const logId = galleryStore._generateId();
+    const replyToken = this._generateReplyToken(galleryId, logId);
+    const replyTo = this._getReplyToAddress(replyToken);
     const baseUrl = process.env.BASE_URL;
     // Only inject tracking pixel when a real public BASE_URL is configured
     // (localhost tracking pixels are a major spam trigger for Outlook/Hotmail)
@@ -61,8 +81,13 @@ class EmailSender {
       to: emailTo,
       subject: rendered.subject,
       html: rendered.html + trackingPixel,
-      text: rendered.text
+      text: rendered.text,
+      headers: {
+        'X-Gallery-Outreach-Log-Id': logId,
+        'X-Gallery-Outreach-Reply-Token': replyToken
+      }
     };
+    if (replyTo) mailOpts.replyTo = replyTo;
 
     if (attachments.length > 0) {
       mailOpts.attachments = attachments.map(a => ({
@@ -73,18 +98,18 @@ class EmailSender {
 
     try {
       const info = await this._getTransporter().sendMail(mailOpts);
-      // Log as sent with the pre-generated logId
-      const db = await (require('../data/db').getDb());
-      await db.run(`
-        INSERT INTO send_log (id, gallery_id, email_to, template, status, sent_at)
-        VALUES (?, ?, ?, ?, ?, ?)`,
-        [logId, galleryId, emailTo, templateName, 'sent', new Date().toISOString()]
-      );
-      await galleryStore.update(galleryId, { status: 'contacted' });
+      await galleryStore.logSend(galleryId, emailTo, templateName, 'sent', {
+        id: logId,
+        messageId: info.messageId,
+        replyToken
+      });
       
-      return { success: true, messageId: info.messageId, to: emailTo, gallery: gallery.name, logId };
+      return { success: true, messageId: info.messageId, replyToken, to: emailTo, gallery: gallery.name, logId };
     } catch (err) {
-      await galleryStore.logSend(galleryId, emailTo, templateName, 'failed');
+      await galleryStore.logSend(galleryId, emailTo, templateName, 'failed', {
+        id: logId,
+        replyToken
+      });
       throw err;
     }
   }
